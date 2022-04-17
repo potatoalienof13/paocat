@@ -1,0 +1,3 @@
+[submodule "hashmap.h"]
+	path = hashmap.h
+	url = https://github.com/sheredom/hashmap.h
