@@ -12,6 +12,8 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <uv.h>
+
 
 int server_socket;
 
@@ -41,17 +43,7 @@ enum SOCKET_TYPE {
 	SOCKET_TYPE_STDIN,
 };
 
-
-
-struct message_header {
-	uint32_t length;
-	uint32_t message_type;
-	uint64_t peer_id;
-	uint64_t message_id;
-};
-
 typedef int64_t group_t;
-
 
 const int MESSAGE_HEADER_SIZE =
     sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint64_t) + sizeof(uint64_t);
@@ -163,7 +155,7 @@ void send_message_type_unlink(struct pollfd_with_metadata *pfd,
 void parse_message_header(char *buffer, int buffer_size,
                           struct message_header *mh) {
 	if (buffer_size < MESSAGE_HEADER_SIZE)
-		sucks_to_sucks("sent too small header too be parsed");
+		sucks_to_sucks("sent too small header to the header parser");
 	mh->length = *(uint32_t *)buffer;
 	mh->message_type = *(uint32_t *)(buffer + sizeof(mh->length));
 	mh->peer_id =
@@ -394,94 +386,99 @@ int main(int argc, char **argv) {
 		
 		pfdwm->groups = malloc(sizeof(group_t) * 2);
 		pfdwm->groups_size = 2;
-		
-		// Connect to the peers specified by the command line arguments.
-		struct addrinfo hints;
-		hints.ai_family = AF_UNSPEC;
-		hints.ai_socktype = SOCK_STREAM;
-		hints.ai_flags = AI_PASSIVE;
-		struct addrinfo *results;
-		int num_ip_address_and_port_arguments = (argc - 1) / 2;
-		// struct sockaddr_in6 remotes[num_ip_address_and_port_arguments];
-		for (int i = 0; i < num_ip_address_and_port_arguments; i++) {
-			int ret =
-			    getaddrinfo(argv[1 + i / 2], argv[2 + i / 2], &hints, &results);
-			if (ret != 0)
-				sucks_to_sucks("failed a getaddrinfo");
-			int new_socket =
-			    socket(results->ai_family, results->ai_flags, results->ai_protocol);
-			    
-			if (connect(new_socket, results->ai_addr, results->ai_addrlen) == -1)
-				sucks_to_sucks("failed a connect");
-			struct pollfd_with_metadata *slot =
-			    get_first_empty_slot_in_pfds(pollfds_with_metadata, MAX_CLIENTS);
-			slot->pollfd.fd = new_socket;
-			slot->socket_type = SOCKET_TYPE_BIND;
-			freeaddrinfo(results);
-		};
-		hashmap_create(2, &group_to_pfd_list);
-		
-		// Then we will run our own server.
-		server_socket = socket(AF_INET6, SOCK_STREAM, 0);
-		if (server_socket < 0)
-			sucks_to_sucks("sockeett");
-		struct sockaddr_in6 address;
-		memset(&address, 0, sizeof(address));
-		address.sin6_family = AF_INET6;
-		memcpy(&address.sin6_addr, &in6addr_any, sizeof(in6addr_any));
-		address.sin6_port = htons(46163);
-		
-		int ret =
-		    bind(server_socket, (struct sockaddr *)&address, sizeof(address));
-		puts(strerror(errno));
-		if (ret < 0)
-			sucks_to_sucks("bind failed");
-			
-		// size_t address_size = sizeof(address);
-		
-		pollfds_with_metadata[0].pollfd.fd = server_socket;
-		pollfds_with_metadata[0].socket_type = SOCKET_TYPE_SERVER;
-		
-		int on = 1; // no clue why this is necessary
-		if (ioctl(server_socket, FIONBIO, (char *)&on) < 0)
-			sucks_to_sucks("ioctl");
-		if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) <
-		    0)
-			sucks_to_sucks("sock opt");
-		if (listen(server_socket, 32) < 0)
-			sucks_to_sucks("listen");
-			
-		struct pollfd pollfds[MAX_CLIENTS];
-		for (;;) {
-			copy_pollfd_with_metadata_to_pollfd(pollfds, pollfds_with_metadata,
-			                                    MAX_CLIENTS);
-			ret = poll(pollfds, MAX_CLIENTS, -1);
-			copy_pollfd_to_pollfd_with_metadata(pollfds, pollfds_with_metadata,
-			                                    MAX_CLIENTS);
-			if (ret < 0)
-				sucks_to_sucks("poll");
-				
-			for (int i = 1; i < MAX_CLIENTS; i++) {
-				switch (pollfds_with_metadata[i].socket_type) {
-				case SOCKET_TYPE_BIND:
-				case SOCKET_TYPE_LISTEN:
-					handle_socket_type_listen(&pollfds_with_metadata[i]);
-					break;
-				case SOCKET_TYPE_SERVER:
-					handle_socket_type_server(pollfds_with_metadata, MAX_CLIENTS,
-					                          &pollfds_with_metadata[i]);
-					break;
-				case SOCKET_TYPE_NONE:
-					// Socket should be empty
-					break;
-				default:
-					sucks_to_sucks("UNIMPLEMENTED SOCKET_TYPE");
-				}
-				//	printf("%b\n", pollfd_clients[i].revents);
-			}
-			puts("finished loop");
-		}
 	}
+	// Connect to the peers specified by the command line arguments.
+	/*struct addrinfo hints;
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_socktype = SOCK_STREAM;
+	hints.ai_flags = AI_PASSIVE;
+	struct addrinfo *results;
+	int num_ip_address_and_port_arguments = (argc - 1) / 2;
+	// struct sockaddr_in6 remotes[num_ip_address_and_port_arguments];
+	for (int i = 0; i < num_ip_address_and_port_arguments; i++) {
+		int ret =
+		    getaddrinfo(argv[1 + i / 2], argv[2 + i / 2], &hints, &results);
+		if (ret != 0)
+			sucks_to_sucks("failed a getaddrinfo");
+		int new_socket =
+		    socket(results->ai_family, results->ai_flags, results->ai_protocol);
+	
+		if (connect(new_socket, results->ai_addr, results->ai_addrlen) == -1)
+			sucks_to_sucks("failed a connect");
+		struct pollfd_with_metadata *slot =
+		    get_first_empty_slot_in_pfds(pollfds_with_metadata, MAX_CLIENTS);
+		slot->pollfd.fd = new_socket;
+		slot->socket_type = SOCKET_TYPE_BIND;
+		freeaddrinfo(results);
+	};
+	*/
+	hashmap_create(2, &group_to_pfd_list);
+	
+	// Then we will run our own server.
+	server_socket = socket(AF_INET6, SOCK_STREAM, 0);
+	if (server_socket < 0)
+		sucks_to_sucks("sockeett");
+	struct sockaddr_in6 address;
+	memset(&address, 0, sizeof(address));
+	address.sin6_family = AF_INET6;
+	memcpy(&address.sin6_addr, &in6addr_any, sizeof(in6addr_any));
+	address.sin6_port = htons(46163);
+	
+	ret = bind(server_socket, (struct sockaddr *)&address, sizeof(address));
+	puts(strerror(errno));
+	if (ret < 0)
+		sucks_to_sucks("bind failed");
+		
+	// size_t address_size = sizeof(address);
+	
+	pollfds_with_metadata[0].pollfd.fd = server_socket;
+	pollfds_with_metadata[0].socket_type = SOCKET_TYPE_SERVER;
+
+	uv_tcp_t *tcp_listener =malloc(sizeof(uv_tcp_t));
+	
+	int on = 1; // no clue why this is necessary
+	if (ioctl(server_socket, FIONBIO, (char *)&on) < 0)
+		sucks_to_sucks("ioctl");
+	if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on)) <
+	    0)
+		sucks_to_sucks("sock opt");
+	if (listen(server_socket, 32) < 0)
+		sucks_to_sucks("listen");
+		
+	struct pollfd pollfds[MAX_CLIENTS];
+
+	uv_loop_t *loop = malloc(sizeof(uv_loop_t));
+	uv_loop_init(loop);
+	for (;;) {
+		copy_pollfd_with_metadata_to_pollfd(pollfds, pollfds_with_metadata,
+		                                    MAX_CLIENTS);
+		ret = poll(pollfds, MAX_CLIENTS, -1);
+		copy_pollfd_to_pollfd_with_metadata(pollfds, pollfds_with_metadata,
+		                                    MAX_CLIENTS);
+		if (ret < 0)
+			sucks_to_sucks("poll");
+			
+		for (int i = 1; i < MAX_CLIENTS; i++) {
+			switch (pollfds_with_metadata[i].socket_type) {
+			case SOCKET_TYPE_BIND:
+			case SOCKET_TYPE_LISTEN:
+				handle_socket_type_listen(&pollfds_with_metadata[i]);
+				break;
+			case SOCKET_TYPE_SERVER:
+				handle_socket_type_server(pollfds_with_metadata, MAX_CLIENTS,
+				                          &pollfds_with_metadata[i]);
+				break;
+			case SOCKET_TYPE_NONE:
+				// Socket should be empty
+				break;
+			default:
+				sucks_to_sucks("UNIMPLEMENTED SOCKET_TYPE");
+			}
+			//	printf("%b\n", pollfd_clients[i].revents);
+		}
+		puts("finished loop");
+	}
+	
 	close(server_socket);
 }
 
