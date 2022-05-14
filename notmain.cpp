@@ -28,7 +28,6 @@ std::unordered_map<group_t, std::list<uv_stream_t *>> group_to_peer_hashmap;
 std::unordered_map<peer_t, message_id_t> peer_id_to_highest_message_id;
 std::list<group_t> groups_we_like;
 
-
 static void parse_message_header(char *data, size_t data_size, struct paocat_header_s *header) {
 	if (data_size < sizeof(struct paocat_header_s)) {
 		fprintf(stderr, "Data that was too small was passed to be parsed as a header");
@@ -36,7 +35,6 @@ static void parse_message_header(char *data, size_t data_size, struct paocat_hea
 	}
 	memcpy(header, data, sizeof(*header));
 }
-
 
 static void clear_peer_from_hashmap(uv_stream_t *peer) {
 	for (auto [key, value] : group_to_peer_hashmap)
@@ -166,10 +164,6 @@ static void deal_with_read_data(uv_stream_t *stream, ssize_t number_read, const 
 		return;
 	}
 	
-	
-	
-	
-	
 	switch (partial_message->message.header.message_type) {
 	case PAOCAT_MESSAGE_TYPE_SEND:
 		// Only care about message_id for send messages because they are the only type that is rebroadcasted
@@ -185,8 +179,6 @@ static void deal_with_read_data(uv_stream_t *stream, ssize_t number_read, const 
 		broadcast_message_to_group(&partial_message->message);
 		break;
 	case PAOCAT_MESSAGE_TYPE_LINK:
-		// Very important semicolon do not remove
-		;
 		if (partial_message->message.data_size != sizeof(struct paocat_message_s)) {
 			fprintf(stderr, "Peer sent an incorrect link message, with an incorrectly sized header");
 			uv_close((uv_handle_t *)stream, close_stream_data_cb);
@@ -260,7 +252,7 @@ static void on_accept_connection(struct uv_stream_s *stream, int status) {
 	}
 	uv_tcp_t *client = (uv_tcp_t *)malloc(sizeof(uv_tcp_t));
 	uv_tcp_init(default_loop, client);
-
+	
 	link_all_groups_we_like(stream);
 	
 	client->data = malloc(sizeof(struct stream_data));
